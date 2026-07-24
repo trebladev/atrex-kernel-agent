@@ -91,6 +91,8 @@ hardware facts and measured optimization evidence.
 ### Jetson Thor / SM110
 
 - [Jetson Thor hardware facts](nvidia/blackwell-thor/hardware-specs/hardware_specs_sm110.md)
+- [Thor CUDA optimization cards](nvidia/blackwell-thor/kernel-opt/cuda/)
+- [Thor CUDA reference kernels](../reference-kernels/nvidia/blackwell-thor/cuda/)
 - [Blackwell general optimization cards](nvidia/blackwell/kernel-opt/)
 
 ### SM120 / RTX PRO 5000

@@ -374,6 +374,52 @@
         "source": "flashinfer"
       },
       {
+        "prefix": "nvidia/blackwell-thor/",
+        "architectures": [
+          "blackwell-thor"
+        ],
+        "products": [
+          "jetson-thor",
+          "t5000"
+        ],
+        "vendors": [
+          "nvidia"
+        ],
+        "status": "historical-snapshot"
+      },
+      {
+        "prefix": "nvidia/blackwell-thor/cuda/",
+        "dsls": [
+          "cuda"
+        ]
+      },
+      {
+        "prefix": "nvidia/blackwell-thor/cuda/bf16_matmul_qwen36_thor/",
+        "operators": [
+          "gemm"
+        ],
+        "status": "historical-snapshot",
+        "source": "FlashRT"
+      },
+      {
+        "prefix": "nvidia/blackwell-thor/cuda/cosmos3_reasoner_attn/",
+        "operators": [
+          "flash-attention",
+          "rope"
+        ],
+        "status": "historical-snapshot",
+        "source": "FlashRT"
+      },
+      {
+        "prefix": "nvidia/blackwell-thor/cuda/cosmos3_reasoner_gemv/",
+        "operators": [
+          "gemv",
+          "quantization"
+        ],
+        "status": "historical-snapshot",
+        "source": "FlashRT"
+      },
+      {
         "prefix": "nvidia/blackwell-geforce/",
         "architectures": [
           "blackwell-geforce"

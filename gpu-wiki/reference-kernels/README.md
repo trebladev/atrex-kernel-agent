@@ -62,6 +62,8 @@ reference-kernels/
 │   │   └── triton/             # cuLA chunk_intra attention
 │   ├── blackwell-ultra/        # SM103 (B300/GB300)
 │   │   └── cutedsl/            # CUTLASS + FlashInfer block-scaled GEMM
+│   ├── blackwell-thor/         # SM110 (Jetson Thor)
+│   │   └── cuda/               # FlashRT Thor M-tile GEMM, split-KV decode attn, M=1 W4A16 GEMV
 │   └── blackwell-geforce/      # SM120
 │       ├── cuda/               # CUDA C++ / inline PTX NVFP4 Split-K, prefill, RMSNorm-MLP PDL diagnostics
 │       ├── cutedsl/            # cutlass + flash-attention + task39 b12x diagnostic fork + GDN chunk fwd + quack (SM120 GEMM)

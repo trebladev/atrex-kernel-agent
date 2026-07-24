@@ -502,9 +502,9 @@ class ReferenceManifestTests(unittest.TestCase):
         cls.by_path = {page.rel_path: page for page in cls.pages}
 
     def test_live_manifest_loads_and_covers_the_reference_index(self):
-        self.assertEqual(522, len(self.pages))
+        self.assertEqual(528, len(self.pages))
         self.assertEqual(
-            499,
+            505,
             sum(
                 Path(page.rel_path).suffix.lower() in query.REFERENCE_SOURCE_SUFFIXES
                 for page in self.pages
@@ -666,7 +666,7 @@ class ArchitectureFirstLayoutTests(unittest.TestCase):
         }
         pages = query.load_pages(self.docs)
         self.assertEqual(content_files, {page.rel_path for page in pages})
-        self.assertEqual(345, len(pages))
+        self.assertEqual(348, len(pages))
         for page in pages:
             self.assertIn(page.segments[0], {"amd", "generic", "nvidia"})
             self.assertIsNotNone(query.section_value(page), page.rel_path)

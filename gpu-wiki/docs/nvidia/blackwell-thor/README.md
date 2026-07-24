@@ -7,3 +7,4 @@ SM103, and SM120 product-specific evidence.
 ## Subdirectories
 
 - [hardware-specs/](hardware-specs/) — Hardware Specs
+- [kernel-opt/](kernel-opt/) — Optimization Cards
