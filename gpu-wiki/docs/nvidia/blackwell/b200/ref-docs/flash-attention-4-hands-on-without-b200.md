@@ -34,4 +34,7 @@ For those unfamiliar with CuTe DSL, Simon's blog (veitner.bearblog.dev) provides
 ## 5. Practical Notes
 
 - **Nsight Compute profiling:** Modal does not support ncu — cloud platforms lack hardware counter permissions.
-- **Alternative hardware:** Jetson Thor (3499 USD, sm110 architecture with tcgen05 support) is an option for local profiling access.
+- **Alternative hardware:** Jetson Thor uses the distinct SM110 architecture and
+  can provide local profiling access. Confirm tcgen05 and library support for
+  the exact JetPack/CUDA release before treating an SM100 kernel as portable;
+  see the [Jetson Thor hardware page](../../../blackwell-thor/hardware-specs/hardware_specs_sm110.md).

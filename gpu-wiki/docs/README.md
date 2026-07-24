@@ -14,6 +14,7 @@ docs/
 │   ├── blackwell/                   # SM100 general
 │   │   └── b200/                    # B200/GB200 product overlay
 │   ├── blackwell-ultra/             # SM103 / B300, GB300
+│   ├── blackwell-thor/              # SM110 / Jetson Thor
 │   └── blackwell-geforce/           # SM120 / RTX PRO 5000
 └── amd/
     ├── common/                      # vendor-general / explicit cross-arch
@@ -34,7 +35,8 @@ Within each scope, the second dimension is the knowledge role:
 
 Product queries inherit their architecture's general knowledge while remaining
 isolated from sibling products. For example, B200 includes `nvidia/blackwell/`
-and `nvidia/blackwell/b200/`, whereas B300 excludes B200-only evidence.
+and `nvidia/blackwell/b200/`, whereas B300 and Jetson Thor inherit applicable
+Blackwell concepts but exclude B200-only evidence.
 
 ## Entry points
 
@@ -48,6 +50,7 @@ known:
 
 ```bash
 python3 gpu-wiki/scripts/query.py --arch h20 --area docs --section hardware-specs
+python3 gpu-wiki/scripts/query.py --arch thor --area docs --section hardware-specs
 python3 gpu-wiki/scripts/query.py "gdn" --arch pro5000 --dsl cutedsl
 python3 gpu-wiki/scripts/query.py "flash attention" --arch mi308x --dsl flydsl
 ```

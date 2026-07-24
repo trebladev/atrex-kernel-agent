@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -44,6 +45,8 @@ class QueryTests(unittest.TestCase):
                 "# B200 Hardware Specifications\n",
             "nvidia/blackwell-ultra/hardware-specs/hardware_specs_b300.md":
                 "# B300 Hardware Specifications\n",
+            "nvidia/blackwell-thor/hardware-specs/hardware_specs_sm110.md":
+                "# Jetson Thor SM110 Hardware Specifications\n",
             "amd/cdna3/kernel-opt/flash-attention-tilelang.md":
                 "# CDNA3 Flash Attention TileLang\n\nA different DSL.\n",
             "generic/ref-docs/gemm-optimization.md":
@@ -165,12 +168,29 @@ class QueryTests(unittest.TestCase):
         _, family = self.run_query("--arch", "blackwell", "--section", "hardware-specs")
         self.assertIn("hardware_specs_b200.md", family)
         self.assertIn("hardware_specs_b300.md", family)
+        self.assertIn("hardware_specs_sm110.md", family)
         self.assertIn("arch=blackwell-family", family)
 
         _, sm100 = self.run_query("--arch", "sm100", "--section", "hardware-specs")
         self.assertIn("hardware_specs_b200.md", sm100)
         self.assertNotIn("hardware_specs_b300.md", sm100)
+        self.assertNotIn("hardware_specs_sm110.md", sm100)
         self.assertIn("arch=blackwell", sm100)
+
+    def test_thor_aliases_inherit_blackwell_and_exclude_sibling_products(self):
+        outputs = []
+        for alias in ("thor", "jetson-thor", "jetson-agx-thor", "t5000", "sm110"):
+            code, output = self.run_query("--arch", alias)
+            self.assertEqual(code, 0, alias)
+            self.assertIn("arch=blackwell-thor", output, alias)
+            self.assertIn("vendor=nvidia", output, alias)
+            self.assertIn("blackwell/kernel-opt/hands-on/tcgen05.md", output, alias)
+            self.assertIn("blackwell-thor/hardware-specs/hardware_specs_sm110.md", output, alias)
+            self.assertNotIn("blackwell/b200/hardware-specs/hardware_specs_b200.md", output)
+            self.assertNotIn("blackwell-ultra/hardware-specs/hardware_specs_b300.md", output)
+            self.assertNotIn("blackwell-geforce/ref-docs/cutedsl/gdn.md", output)
+            outputs.append(output)
+        self.assertTrue(all(output == outputs[0] for output in outputs[1:]))
 
     def test_architecture_family_query_keeps_cdna3_products(self):
         _, output = self.run_query("--arch", "gfx942", "--section", "hardware-specs")
@@ -646,14 +666,14 @@ class ArchitectureFirstLayoutTests(unittest.TestCase):
         }
         pages = query.load_pages(self.docs)
         self.assertEqual(content_files, {page.rel_path for page in pages})
-        self.assertEqual(344, len(pages))
+        self.assertEqual(345, len(pages))
         for page in pages:
             self.assertIn(page.segments[0], {"amd", "generic", "nvidia"})
             self.assertIsNotNone(query.section_value(page), page.rel_path)
 
     def test_top_level_manifest_supplies_live_docs_scope(self):
         defaults, entries = query.load_docs_manifest(self.docs)
-        self.assertGreaterEqual(len(defaults), 14)
+        self.assertGreaterEqual(len(defaults), 15)
         self.assertGreaterEqual(len(entries), 10)
         pages = query.load_pages(self.docs)
         for page in pages:
@@ -668,6 +688,9 @@ class ArchitectureFirstLayoutTests(unittest.TestCase):
             "h20": "nvidia/hopper/hardware-specs/hardware_specs_hopper.md",
             "b200": "nvidia/blackwell/b200/hardware-specs/hardware_specs_b200.md",
             "b300": "nvidia/blackwell-ultra/hardware-specs/hardware_specs_b300.md",
+            "thor": "nvidia/blackwell-thor/hardware-specs/hardware_specs_sm110.md",
+            "sm110": "nvidia/blackwell-thor/hardware-specs/hardware_specs_sm110.md",
+            "t5000": "nvidia/blackwell-thor/hardware-specs/hardware_specs_sm110.md",
             "pro5000": "nvidia/blackwell-geforce/hardware-specs/hardware_specs_sm120.md",
             "sm120": "nvidia/blackwell-geforce/hardware-specs/hardware_specs_sm120.md",
             "mi300x": "amd/cdna3/mi300x/hardware-specs/hardware_specs_mi300x.md",
@@ -688,6 +711,7 @@ class ArchitectureFirstLayoutTests(unittest.TestCase):
     def test_live_product_scopes_inherit_parent_but_exclude_siblings(self):
         b200 = self.scoped_paths("b200", "nvidia")
         b300 = self.scoped_paths("blackwell-ultra", "nvidia")
+        thor = self.scoped_paths("blackwell-thor", "nvidia")
         pro5000 = self.scoped_paths("blackwell-geforce", "nvidia")
         mi300x = self.scoped_paths("mi300x", "amd")
         mi308x = self.scoped_paths("mi308x", "amd")
@@ -696,6 +720,12 @@ class ArchitectureFirstLayoutTests(unittest.TestCase):
         self.assertTrue(any(path.startswith("nvidia/blackwell/b200/") for path in b200))
         self.assertTrue(any(path.startswith("nvidia/blackwell/kernel-opt/") for path in b300))
         self.assertFalse(any(path.startswith("nvidia/blackwell/b200/") for path in b300))
+        self.assertTrue(any(path.startswith("nvidia/blackwell/kernel-opt/") for path in thor))
+        self.assertTrue(any(path.startswith("nvidia/blackwell-thor/") for path in thor))
+        self.assertFalse(any(path.startswith("nvidia/blackwell/b200/") for path in thor))
+        self.assertFalse(any(path.startswith("nvidia/blackwell-ultra/") for path in thor))
+        self.assertFalse(any(path.startswith("nvidia/blackwell-geforce/") for path in thor))
+
         self.assertFalse(any(path.startswith("nvidia/blackwell/") for path in pro5000))
         self.assertFalse(any("/mi308x/" in path for path in mi300x))
         self.assertFalse(any("/mi300x/" in path for path in mi308x))
@@ -738,6 +768,28 @@ class Pro5000KnowledgeTests(unittest.TestCase):
 
 
 class HardwareKnowledgeTests(unittest.TestCase):
+    def test_jetson_thor_scope_is_sm110_without_sm102_conflicts(self):
+        hardware = (
+            REPO_ROOT
+            / "gpu-wiki/docs/nvidia/blackwell-thor/hardware-specs/"
+            "hardware_specs_sm110.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Wiki compute-capability / SM target | SM110", hardware)
+        self.assertIn("Not specified; verify on device", hardware)
+
+        capabilities = (
+            REPO_ROOT
+            / "gpu-wiki/docs/nvidia/common/kernel-opt/nvidia-compute-capabilities.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("| 11.0 | Blackwell Thor | Jetson Thor |", capabilities)
+
+        conflicts = []
+        for path in (REPO_ROOT / "gpu-wiki/docs/nvidia").rglob("*.md"):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if re.search(r"Thor[^\n]{0,80}SM[_ -]?102", text, re.IGNORECASE):
+                conflicts.append(path.relative_to(REPO_ROOT).as_posix())
+        self.assertEqual([], conflicts, "Jetson Thor must use the SM110 scope")
+
     def test_b200_shared_memory_matches_official_tuning_guide(self):
         path = REPO_ROOT / "gpu-wiki/docs/nvidia/blackwell/b200/hardware-specs/hardware_specs_b200.md"
         text = path.read_text(encoding="utf-8")

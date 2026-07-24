@@ -30,6 +30,7 @@ Examples:
 # Hardware facts: section is optional but useful for narrowing.
 python3 gpu-wiki/scripts/query.py --arch a100 --area docs --section hardware-specs
 python3 gpu-wiki/scripts/query.py --arch h20 --area docs --section hardware-specs
+python3 gpu-wiki/scripts/query.py --arch thor --area docs --section hardware-specs
 python3 gpu-wiki/scripts/query.py --arch pro5000 --area docs --section hardware-specs
 
 # Search an operator within an isolated architecture/DSL scope.
@@ -90,8 +91,9 @@ results show an explicit status when one is available.
 
 The same manifest also provides the architecture/vendor scope for `docs/`,
 including exact cross-architecture overrides for selected common pages.
-`--arch blackwell` is a family query covering B200 and B300; use `--arch sm100`
-for the exact SM100/B200 scope and `--arch sm103` for B300.
+`--arch blackwell` is a family query covering B200, B300, and Jetson Thor; use
+`--arch sm100` for the exact SM100/B200 scope, `--arch sm103` for B300, and
+`--arch sm110` for Jetson Thor.
 
 Accepted card aliases include:
 
@@ -101,6 +103,7 @@ Accepted card aliases include:
 | H20 / H100 / H200 / SM90 | NVIDIA Hopper |
 | B200 / GB200 | NVIDIA Blackwell product overlay |
 | B300 / GB300 / SM103 | NVIDIA Blackwell Ultra |
+| Jetson Thor / Thor / SM110 | NVIDIA Blackwell Thor |
 | RTX PRO 5000 / Pro5000 / SM120 | NVIDIA Blackwell GeForce/workstation |
 | MI300X / MI308X / gfx942 | AMD CDNA3 and product overlays |
 | MI355X / gfx950 | AMD CDNA4 |
@@ -111,6 +114,7 @@ Accepted card aliases include:
 - [H20, H100, H200 / Hopper](docs/nvidia/hopper/hardware-specs/hardware_specs_hopper.md)
 - [B200](docs/nvidia/blackwell/b200/hardware-specs/hardware_specs_b200.md)
 - [B300](docs/nvidia/blackwell-ultra/hardware-specs/hardware_specs_b300.md)
+- [Jetson Thor / SM110](docs/nvidia/blackwell-thor/hardware-specs/hardware_specs_sm110.md)
 - [RTX PRO 5000 / SM120](docs/nvidia/blackwell-geforce/hardware-specs/hardware_specs_sm120.md)
 - [MI300X](docs/amd/cdna3/mi300x/hardware-specs/hardware_specs_mi300x.md)
 - [MI308X](docs/amd/cdna3/mi308x/hardware-specs/hardware_specs_mi308x.md)

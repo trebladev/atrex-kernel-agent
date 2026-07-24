@@ -6,7 +6,7 @@ An analysis of new PTX ISA 8.8 features specific to the B300 (Blackwell Ultra / 
 
 ## 1. Overview
 
-NVIDIA recently released PTX ISA 8.8, which likely contains information about the B300 (Blackwell Ultra) variant. Given that B200 is SM_100 and Thor is SM_102, the newly introduced SM_103 clearly corresponds to B300.
+NVIDIA recently released PTX ISA 8.8, which likely contains information about the B300 (Blackwell Ultra) variant. B200 is SM_100, B300 is SM_103, and Jetson Thor is the distinct SM_110 Blackwell target.
 
 NVIDIA highlights two key improvements for Blackwell Ultra:
 1. **1.5x FP4 compute throughput**

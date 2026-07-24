@@ -45,6 +45,15 @@
         ]
       },
       {
+        "prefix": "nvidia/blackwell-thor/",
+        "architectures": [
+          "blackwell-thor"
+        ],
+        "vendors": [
+          "nvidia"
+        ]
+      },
+      {
         "prefix": "nvidia/blackwell-geforce/",
         "architectures": [
           "blackwell-geforce"

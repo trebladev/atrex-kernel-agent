@@ -30,19 +30,23 @@ python3 gpu-wiki/scripts/query.py <keywords> --arch <target>
 |---|---|---|
 | [Ampere](nvidia/ampere/) | A100, SM80 | Independent architecture scope |
 | [Hopper](nvidia/hopper/) | H20, H100, H200, SM90 | Independent architecture scope |
-| [Blackwell](nvidia/blackwell/) | SM100 general | Parent of the B200 overlay |
+| [Blackwell](nvidia/blackwell/) | SM100 general | Reusable parent concepts for B200, B300, and Thor where applicable |
 | [B200](nvidia/blackwell/b200/) | B200, GB200 | Inherits Blackwell general knowledge; product evidence stays here |
 | [Blackwell Ultra](nvidia/blackwell-ultra/) | B300, GB300, SM103 | May inherit applicable Blackwell concepts, but excludes B200-only evidence |
-| [Blackwell GeForce/workstation](nvidia/blackwell-geforce/) | RTX PRO 5000, Pro5000, SM120 | Separate from SM100 and SM103 despite the shared Blackwell brand |
+| [Blackwell Thor](nvidia/blackwell-thor/) | Jetson Thor, Thor, SM110 | Inherits applicable Blackwell concepts; embedded-product facts and measurements stay isolated |
+| [Blackwell GeForce/workstation](nvidia/blackwell-geforce/) | RTX PRO 5000, Pro5000, SM120 | Separate from SM100, SM103, and SM110 despite the shared Blackwell brand |
 
 Important transfer boundaries:
 
 - WGMMA and Hopper pipeline examples do not automatically apply to SM100,
-  SM103, or SM120.
+  SM103, SM110, or SM120.
 - SM100 tcgen05/TMEM examples do not establish availability or identical
-  behavior on SM120.
+  behavior on SM110 or SM120.
 - B200 benchmark results and resource assumptions must not be used as B300
   facts unless a document explicitly compares both products.
+- B200/B300 throughput, HBM, SM-count, and power assumptions must not be used
+  as Jetson Thor facts; Thor is an embedded SoC with its own memory and power
+  constraints.
 - RTX PRO 5000 hardware facts come from the SM120 hardware page and official
   workstation sources, not B200/B300 data-center specifications.
 
@@ -83,6 +87,11 @@ hardware facts and measured optimization evidence.
   dependencies.
 
 ## High-value companion groups
+
+### Jetson Thor / SM110
+
+- [Jetson Thor hardware facts](nvidia/blackwell-thor/hardware-specs/hardware_specs_sm110.md)
+- [Blackwell general optimization cards](nvidia/blackwell/kernel-opt/)
 
 ### SM120 / RTX PRO 5000
 

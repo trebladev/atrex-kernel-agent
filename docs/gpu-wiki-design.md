@@ -31,6 +31,7 @@ gpu-wiki/
 │   │   ├── blackwell/
 │   │   │   └── b200/
 │   │   ├── blackwell-ultra/
+│   │   ├── blackwell-thor/
 │   │   └── blackwell-geforce/
 │   └── amd/
 │       ├── common/
@@ -55,6 +56,7 @@ Architecture roots and aliases:
 | `nvidia/blackwell/` | SM100 general knowledge |
 | `nvidia/blackwell/b200/` | B200, GB200 product-only evidence |
 | `nvidia/blackwell-ultra/` | SM103, B300, GB300 |
+| `nvidia/blackwell-thor/` | SM110, Jetson Thor, Thor |
 | `nvidia/blackwell-geforce/` | SM120, RTX PRO 5000, Pro5000 |
 | `amd/cdna3/` | gfx942 general knowledge |
 | `amd/cdna3/mi300x/` | MI300X product-only evidence |
@@ -81,12 +83,12 @@ Current content inventory, excluding README indexes and `RELATIONS.md`:
 
 | Role | Documents |
 |---|---:|
-| Hardware specs | 9 |
+| Hardware specs | 10 |
 | Kernel optimization | 124 |
 | Reference documents | 185 |
 | Pitfalls | 21 |
 | Converter | 5 |
-| **Searchable total** | **344** |
+| **Searchable total** | **345** |
 
 The reference index adds 499 source files plus 23 manifest-selected substantive
 guides. Navigation-only README files are not indexed unless explicitly selected.
@@ -109,6 +111,8 @@ Retrieval inheritance is one-way:
 
 - B200 includes Blackwell/SM100 general pages plus B200 pages.
 - B300 includes applicable Blackwell general pages, but never B200-only pages.
+- Jetson Thor includes applicable Blackwell general pages, but never B200,
+  B300, or SM120 product-specific pages.
 - MI300X and MI308X each include CDNA3 general pages, but never the sibling
   product's pages.
 - A family query such as `gfx942` may intentionally include both CDNA3 product

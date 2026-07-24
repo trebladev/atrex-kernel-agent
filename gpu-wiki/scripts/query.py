@@ -25,6 +25,16 @@ ARCH_ALIASES = {
     "blackwell": {"blackwell", "sm100", "sm_100"},
     "b200": {"b200", "gb200"},
     "blackwell-ultra": {"blackwell-ultra", "sm103", "sm_103", "b300", "gb300"},
+    "blackwell-thor": {
+        "blackwell-thor",
+        "jetson-agx-thor",
+        "jetson-thor",
+        "sm-110",
+        "sm110",
+        "sm_110",
+        "t5000",
+        "thor",
+    },
     "blackwell-geforce": {
         "blackwell-geforce",
         "pro-5000",
@@ -55,6 +65,7 @@ ARCH_VENDORS = {
     "blackwell": "nvidia",
     "b200": "nvidia",
     "blackwell-ultra": "nvidia",
+    "blackwell-thor": "nvidia",
     "blackwell-geforce": "nvidia",
     "cdna3": "amd",
     "mi300x": "amd",
@@ -69,6 +80,7 @@ ARCH_VENDORS = {
 ARCH_PARENTS = {
     "b200": "blackwell",
     "blackwell-ultra": "blackwell",
+    "blackwell-thor": "blackwell",
     "mi300x": "cdna3",
     "mi308x": "cdna3",
 }
@@ -147,7 +159,8 @@ REFERENCE_KINDS = {
 DEFAULT_EXCLUDED_REFERENCE_KINDS = {"test", "build", "package"}
 REFERENCE_PRODUCTS = {
     "a100", "h20", "h100", "h200", "b200", "gb200", "b300", "gb300",
-    "pro5000", "rtx-pro-5000", "mi300x", "mi308x", "mi355x",
+    "jetson-thor", "t5000", "pro5000", "rtx-pro-5000", "mi300x",
+    "mi308x", "mi355x",
 }
 # The reference tree predates product overlays in a few places. Explicit
 # architecture markers in a path narrow the physical directory scope; otherwise
@@ -161,6 +174,9 @@ REFERENCE_ARCH_MARKERS = {
     "gfx1250": "rdna4",
     "sm120": "blackwell-geforce",
     "pro5000": "blackwell-geforce",
+    "sm110": "blackwell-thor",
+    "t5000": "blackwell-thor",
+    "jetsonthor": "blackwell-thor",
     "sm103": "blackwell-ultra",
     "b300": "blackwell-ultra",
     "gb300": "blackwell-ultra",
@@ -172,6 +188,7 @@ REFERENCE_ARCH_MARKERS = {
 }
 REFERENCE_DIRECTORY_SCOPES = (
     ("nvidia/blackwell-geforce/", {"blackwell-geforce"}),
+    ("nvidia/blackwell-thor/", {"blackwell-thor"}),
     ("nvidia/blackwell-ultra/", {"blackwell-ultra"}),
     ("nvidia/blackwell/", {"blackwell"}),
     ("nvidia/hopper/", {"hopper"}),
@@ -667,7 +684,7 @@ def _expanded_architectures(requested: set[str]) -> set[str]:
     expanded = set(requested)
     if "blackwell-family" in expanded:
         expanded.remove("blackwell-family")
-        expanded.update({"blackwell", "b200", "blackwell-ultra"})
+        expanded.update({"blackwell", "b200", "blackwell-ultra", "blackwell-thor"})
     return expanded
 
 

@@ -29,6 +29,7 @@ Different compute capabilities (CC) correspond to different hardware specificati
 | 9.0 | Hopper | H100, H200, H20 |
 | 10.0 | Blackwell data center | B100, B200, GB200 |
 | 10.3 | Blackwell Ultra | B300, GB300 |
+| 11.0 | Blackwell Thor | Jetson Thor |
 | 12.0 | Blackwell GeForce/workstation | RTX PRO 5000/6000 Blackwell, GeForce RTX 50 series |
 
 ## Memory Specifications
