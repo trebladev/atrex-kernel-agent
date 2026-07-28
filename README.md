@@ -8,7 +8,7 @@ AKA is an end-to-end Agent project for GPU kernel implementation, analysis, prof
 
 ## News
 
-- [2026-07] We helped **Qwen3.8** rank **No. 1** on the **SOL-ExecBench FlashInfer operator optimization leaderboard**.
+- [2026-07] We helped **Qwen3.8** rank **No. 1** on the **SOL-ExecBench FlashInfer operator optimization leaderboard**. [[Leaderboard](https://research.nvidia.com/benchmarks/sol-execbench/leaderboard/collection/4/B200)]
 - [2026-07] We released **Atrex Kernel Agent v0.2.0** with a dual-route optimization system, an orchestrated clean-session loop, native SOL-ExecBench operator workflow, Triton-to-Gluon conversion support, and a fuller NVIDIA profiling toolchain. [[Release](https://github.com/alibaba/atrex-kernel-agent/releases/tag/v0.2.0)]
 - [2026-07] We released **the Atrex paper**: [Are LLM-Generated GPU Kernels Production-Ready? A Trace-Driven Benchmark and Optimization Agent](https://arxiv.org/abs/2607.14541).
 - [2026-06] We released **Atrex Kernel Agent v0.1.0** as the initial open-source version, with the interactive `gpu-kernel-optimizer` Skill route, GPU Wiki knowledge base, profile-driven optimization workflow, profiling tools, and reference templates. [[Release](https://github.com/alibaba/atrex-kernel-agent/releases/tag/v0.1.0)]
@@ -64,23 +64,84 @@ The installer detects supported runtime home directories and prepares local hook
 
 ![route2 optimization loop](assets/optimize_workflow.png)
 
-This route runs the optimization loop from the source repo without installing anything into your coding runtime. `orchestrator/optimize.py` owns the **outer loop** and spawns a fresh, clean session for each iteration over the same git workspace. State crosses the session boundary only through disk (`memory/v<N>.json`, `plans/`, `profiles/`, and git), and HEAD is always the best kernel.
+This route runs the optimization loop from the source repo without installing anything into your coding runtime. `orchestrator/optimize.py` owns the **outer loop** and spawns a fresh, clean Claude or Qoder CLI session for each iteration over the same git workspace. Select the backend with `--agent-cli claude|qodercli` (default: `claude`). State crosses the session boundary only through disk (`memory/v<N>.json`, `plans/`, `profiles/`, and git), and HEAD is always the best kernel.
+
+Correctness/performance validation and profiling run on an atrex-gpu-gateway sandbox selected by
+`--sandbox-hardware`. The gateway worker receives code and test/profile inputs only: optimizer `memory/`, plans,
+edits, and Git state remain local. Structured test results and profile analysis artifacts are returned to the
+local session. The same transport can be used directly:
+
+```bash
+python tools/sandbox.py --hardware REMOTE_GPU --no-sync -- python test_kernel.py --no-memory
+python tools/sandbox.py --hardware REMOTE_GPU --sync profiles/v1 -- \
+  bash tools/profile_nvidia.sh kernel.py --output-dir profiles/v1 --source
+
+# Same interface on the bundled localhost FIFO scheduler
+# Start it first with: python tools/local_gateway.py serve
+python tools/sandbox.py --hardware local --url http://127.0.0.1:8000 \
+  --no-sync -- python test_kernel.py --no-memory
+```
+
+Local gateway mode preserves the request/packaging/result interface but is not a security sandbox:
+submitted commands run directly as the server user. The bundled scheduler serializes jobs by default,
+persists their status in SQLite, and speaks the same public `agate dev`/jobs API. See
+[docs/local_gateway.md](docs/local_gateway.md) for startup, queue, cancellation, and compatibility details.
 
 Termination is **mechanical**, not left to in-session judgment: the loop stops on a hard budget (max iterations or token budget) or a target-utilization short-circuit on a committed, correctness-passing iteration.
 
-Everything op-specific (workspace name, the reference to optimize, the full workload/shape set, per-workload tolerances) is read from the SOL-ExecBench `--op-dir`; the ground-truth files (`definition.json`, `reference.py`, `workload.jsonl`) are used verbatim and never edited. Only `--platform` and `--framework` cannot be deduced and must be provided. A version that passes `test_kernel.py` in the workspace is directly submittable to SOL-ExecBench.
+Everything op-specific (workspace name, the reference to optimize, the full workload/shape set, per-workload tolerances) is read from the SOL-ExecBench `--op-dir`; the ground-truth files (`definition.json`, `reference.py`, `workload.jsonl`) are used verbatim and never edited. `--platform` is required. In the default `leaderboard` mode, `--framework` may select one framework explicitly; when omitted, the orchestrator launches independent campaigns in parallel for Triton/CuteDSL/Cuda on NVIDIA, Triton/FlyDSL on AMD, or Triton on unknown hardware. A version that passes `test_kernel.py` in its workspace is directly submittable to SOL-ExecBench.
 
 Key options:
 
 ```bash
 --max-iters N        # Hard cap on optimization iterations
 --token-budget N     # Hard token cap across all sessions (0 = no cap)
+--agent-cli CLI      # Optimization session backend: claude (default) or qodercli
+--optimization-mode MODE # leaderboard (default) or production
+--framework DSL      # One explicit DSL; omit to parallel-dispatch all supported DSLs
 --target-util PCT    # Peak-utilization %% short-circuit (default 90)
+--sandbox-hardware GPU # agate selector/alias; independent of the logical --platform name
+--sandbox-profile P  # Optional pre/prod endpoint; default uses agate config
+--sandbox-url URL    # Explicit endpoint; use http://127.0.0.1:8000 with hardware=local
+--sandbox-timeout S  # Remote command timeout, max 600 seconds
 --workspace DIR      # Working directory for the campaign (default: current directory)
 --max-stall N        # Stop after N consecutive no-commit iterations (0 = disabled)
 --convert-after N    # Triton only: after N stalled iters, run one Triton->Gluon convert session
 --arch ARCH          # Override auto-detected runtime arch, e.g. sm_103 or gfx942
 ```
+
+Auto-dispatched campaigns use flat framework/hardware suffixes; for example,
+`<workspace>/kernel_opt_<name>_triton_h20` and
+`<workspace>/kernel_opt_<name>_cutedsl_h20`. Each campaign receives its own full iteration and
+token budgets. Explicit `--framework` campaigns use the same naming convention.
+
+`--optimization-mode leaderboard` preserves the existing permissive `CLAUDE.md` workflow: sessions may
+use a different/mixed implementation or third-party kernel libraries when profiling evidence supports it.
+`--optimization-mode production` also supports omitted `--framework`: the orchestrator auto-dispatches the
+hardware-supported frameworks and binds every child campaign to its assigned framework. V0 may remain the
+PyTorch correctness baseline, but every accepted optimized candidate must be implemented directly and
+exclusively in that child's framework. Third-party kernel/operator imports, calls, and solution dependencies are forbidden. A mechanical
+post-session gate rejects and reverts non-compliant kernel commits, records a `production_policy_rejection`,
+and refuses to package a non-compliant final kernel. Triton-to-Gluon conversion is disabled in production
+mode because the selected framework is exact.
+
+```bash
+python orchestrator/optimize.py \
+  --op-dir /path/to/op --platform TARGET_GPU --sandbox-hardware REMOTE_GPU \
+  --optimization-mode production --framework Triton
+```
+
+`--platform` is a logical optimization target while `--sandbox-hardware` is the gateway selector. The
+orchestrator deliberately does not compare their names or reported GPU models because gateway inventory
+may be aliased or desensitized. Runtime architecture probing remains authoritative when an omitted
+`--framework` requires vendor-specific dispatch.
+
+Both backends run non-interactively with a fresh session ID and the same workspace-local skills,
+agents, prompts, sandbox constraints, and quality gates. Authenticate the selected CLI first with
+`claude auth status` or `qodercli status`. Provider-specific settings can be supplied through
+`ATREX_CLAUDE_SESSION_SETTINGS` or `ATREX_QODER_SESSION_SETTINGS`; `ATREX_SESSION_SETTINGS` remains
+the generic fallback. Some Qoder models report zero token usage in stream JSON; in that case
+`--token-budget` cannot be enforced and `--max-iters` remains the hard campaign bound.
 
 ## Main Files
 
