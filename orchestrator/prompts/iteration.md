@@ -8,6 +8,18 @@ Hard rules for this session:
 - **Do NOT loop.** One cycle, then stop. There is no Stage 6 here — the orchestrator owns the outer loop and decides whether another session runs.
 - **Do NOT try to reach the final target** in this session. Just make this one cycle count and hand off cleanly.
 - The whole point of a clean session is a fresh context: you inherit state from disk, not from a prior conversation.
+- **The host GPU boundary is non-negotiable.** Never run `python test_kernel.py`, `python kernel.py`, or
+  `python -c "import kernel"` directly in the workspace, even as a quick smoke/import check. Always route
+  the command through `python tools/sandbox.py ... --`; the orchestrator terminates the whole session on a
+  direct kernel import or execution. Never import or execute `flashinfer`, `flash_attn`/`flash-attn`, or
+  `xformers` or `vllm` on the host either: a preinstalled package can start `ninja`, `ptxas`, or `nvcc` on first use.
+  Inspect their source statically, or route the import/API probe through the sandbox.
+- **The gateway is shared orchestrator-owned infrastructure.** Never start/stop/restart/signal its service or
+  `screen` session, never delete/edit its configured state directory or job database/log, and never cancel gateway jobs
+  directly. If unavailable, record an infrastructure failure and exit; do not repair it from this session.
+- **Preserve optimizer history.** Never delete or move Git-tracked workspace files/directories such as
+  `memory/`, `roofline.json`, helpers, historical plans, or profiles. Do not shrink sandbox payloads by
+  deleting local state; input filtering belongs to `tools/sandbox.py`.
 
 ## Context
 
@@ -15,12 +27,20 @@ Hard rules for this session:
 - You are producing version **v{{N}}**. Previous version: **v{{PREV}}**.
 - `tools/`, `reference/`, `skills/`, `reference-projects/`, and `gpu-wiki/` are symlinked into the workspace — read/use them by relative path
   (`python tools/memory_manager.py --workspace .`, `reference/v_iteration.schema.json`).
-- `.claude/skills/ncu-report-skill/` — NVIDIA profiling skill (Stage 1).
-- `.claude/skills/KernelWiki/` — kernel optimization knowledge base (Stage 2 L1 search).
-- `/humanize:gen-plan` — plan generation plugin (Stage 2, loaded via `--plugin-dir`).
+{{AGENT_RUNTIME}}
 
 {{HARDWARE}}
 {{SANDBOX}}
+{{EVALUATOR}}
+
+The campaign dependency environment is immutable. Never run `pip`, `python -m pip`, `uv pip`, `conda`,
+`setup.py`, or any other package installation/build command on the host or through the gateway. Use only
+preinstalled dependencies. If an import is unavailable, record the blocker or choose an implementation that
+uses available tooling; do not install or locally compile a third-party library.
+Do not import or execute JIT-capable GPU package code directly on the host. Even a preinstalled package such
+as `flashinfer`, `flash_attn`/`flash-attn`, `xformers`, or `vllm` can invoke `ninja`, `ptxas`, or `nvcc` on first use.
+Static source inspection is allowed. Route any import/API probe/benchmark that may initialize GPU code
+through `tools/sandbox.py`.
 
 This prompt is **self-contained** — it defines all stages (1–4), commit/revert rules, and record format.
 Evidence format throughout: `evidence -> inference -> action`. Do Stages 1–4 once, then commit/revert/record and exit.
@@ -58,6 +78,18 @@ warm up, and invoke `Model` repeatedly so the profiler captures real GPU kernels
 it must not update memory. Collection and analysis then finish inside one sandbox job so a fresh pod is safe
 and raw profiler binaries never become optimizer state. Run exactly one platform-specific command.
 
+Because the driver lives below `profiles/v{{N}}/harness/`, Python does not automatically put the workspace
+root on its import path. Before importing `kernel` or `input`, the driver **must** add that root explicitly:
+```python
+import sys
+from pathlib import Path
+
+WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+```
+Do not run a profile until a lightweight sandbox import check confirms that both workspace modules resolve.
+
 **NVIDIA**:
 ```bash
 python tools/sandbox.py --sync profiles/v{{N}} -- \
@@ -83,7 +115,7 @@ python tools/sandbox.py --sync profiles/v{{N}} -- \
 ```
 
 The wrapper synchronizes the small profile analysis and summary artifacts back locally. Raw
-`.ncu-rep`/ATT binaries stay remote by default. Follow `.claude/skills/ncu-report-skill/SKILL.md` only for
+`.ncu-rep`/ATT binaries stay remote by default. Follow the runtime's available `ncu-report-skill` only for
 interpreting the returned evidence, then write `profiles/v{{N}}/REPORT.md` locally. Pin any source-targeted
 change to the line/SASS evidence produced by the NVIDIA `--source` run.
 
@@ -91,7 +123,7 @@ change to the line/SASS evidence produced by the NVIDIA `--source` run.
 
 ### Stage 2 — Evidence-Driven Research and Planning
 
-**Goal**: Use Stage 1 evidence to find one optimization path and generate `plans/v{{N}}_plan.md` via `humanize:gen-plan`.
+**Goal**: Use Stage 1 evidence to find one optimization path and produce `plans/v{{N}}_plan.md`.
 
 Execution steps:
 
@@ -117,7 +149,7 @@ Execution steps:
 5. **Research strategy** (adaptive based on stall count):
    - **Normal mode** (`STALL_COUNT < 3`): No novelty requirement. Reusing known directions from `open_directions`, prior search findings, or profile evidence is not prohibited.
    - **Forced expansion mode** (`STALL_COUNT >= 3`): The previous directions have failed repeatedly — you MUST expand the search space. Do not limit searches to the current kernel's DSL/language; look at optimization techniques from **other languages or DSLs targeting the same or similar hardware architectures** (e.g., CUDA C++ tricks applicable to Triton, or CuteDSL patterns that inspire Gluon rewrites) and adapt the ideas. Execute the full three-layer progressive search (strict order):
-     - **L1 (gpu-wiki)**: Translate bottleneck diagnoses from `profiles/v{{N}}/REPORT.md` into search keywords. Search architecture-scoped `gpu-wiki/docs/` first, then `gpu-wiki/reference-kernels/`. Only after those P0-P4 sources are insufficient, use `.claude/skills/KernelWiki` or `gpu-wiki/3rdparty/` as P5 sources for NVIDIA SM90/SM100.
+     - **L1 (gpu-wiki)**: Translate bottleneck diagnoses from `profiles/v{{N}}/REPORT.md` into search keywords. Search architecture-scoped `gpu-wiki/docs/` first, then `gpu-wiki/reference-kernels/`. Only after those P0-P4 sources are insufficient, use the runtime's available `KernelWiki` skill or `gpu-wiki/3rdparty/` as P5 sources for NVIDIA SM90/SM100.
      - **L2 (reference-projects)**: Only if L1 yields no new actionable path. Search relevant modules in `reference-projects/` for implementation patterns.
      - **L3 (public web)**: Only if L1+L2 yield nothing new. Use web search for papers, docs, or community posts.
      - The draft MUST contain at least one `New? = Yes` entry. If all layers produce no new finding, report search space exhaustion and stop — do not fabricate a draft or invoke gen-plan.
@@ -129,12 +161,11 @@ Execution steps:
    - Stall context: current `STALL_COUNT` and whether forced expansion was triggered
    - Performance expectation: a measurable post-change profile/latency expectation, plus the condition that would justify PTX/SASS inspection if compiler lowering could explain a mismatch
 8. **Generate plan** via humanize:
-   ```
-   /humanize:gen-plan --input plans/v{{N}}_draft.md --output plans/v{{N}}_plan.md --direct
-   ```
-   This produces a structured plan with acceptance criteria. Use `--direct` to skip convergence rounds (one-shot generation appropriate for a single optimization action within the iteration loop).
 
-**Output**: `plans/v{{N}}_plan.md` (generated by humanize) — the sole input for Stage 3.
+   {{PLAN_GENERATOR}}
+   This produces a structured plan with acceptance criteria. Keep generation in direct/one-shot mode without convergence rounds; this iteration implements only one optimization action.
+
+**Output**: `plans/v{{N}}_plan.md` — the sole input for Stage 3.
 
 ### Stage 3 — Optimization Implementation
 
@@ -166,12 +197,9 @@ Execution steps:
      python test_kernel.py --version v{{N}} --multi-seed 5 --no-memory
    ```
 
-   Or, if you want explicit per-seed traces, run them one at a time:
-   ```bash
-   python tools/sandbox.py --no-sync -- python test_kernel.py --seed 1 --no-memory
-   python tools/sandbox.py --no-sync -- python test_kernel.py --seed 2 --no-memory
-   python tools/sandbox.py --no-sync -- python test_kernel.py --seed 3 --no-memory
-   ```
+   The immutable harness must benchmark only the base seed. Extra seeds are correctness-only over the full
+   shape set; never repeat warmup/timing/reference benchmarking per extra seed, because the public gateway caps
+   one command at 600 seconds. This changes no correctness coverage and keeps performance comparable to V0.
 
    **ALL seeds must PASS.** If ANY seed fails correctness, the kernel is BROKEN — revert
    immediately with `git reset --hard HEAD`. Do NOT commit a kernel that passes only on
@@ -197,7 +225,7 @@ Execution steps:
 
 ### Stage 4 — Validate + Bench
 
-**Goal**: Run the SOL-ExecBench harness for full performance measurement and quality gate.
+**Goal**: Run the immutable workspace harness for full performance measurement and quality gate.
 
 Execution steps:
 
@@ -205,13 +233,17 @@ Execution steps:
    ```bash
    python tools/sandbox.py --no-sync -- python test_kernel.py --version v{{N}} --no-memory
    ```
-   This runs the real `sol-execbench` evaluator over **every workload in `workload.jsonl`** with each workload's own tolerance. Do NOT edit `test_kernel.py` or hand-roll a separate test.
-   Parse `RESULT_JSON` and write the metrics into local `memory/v{{N}}.json`; remote memory is never used.
+   This runs the campaign's immutable evaluator over **every entry in its ground-truth workload source**.
+   Native `shapes.json` campaigns are evaluated by the official Atrex-Bench `run_eval`; SOL
+   `workload.jsonl` campaigns retain `sol-execbench`. Do NOT edit `test_kernel.py`, replace its evaluator
+   route, or hand-roll a separate benchmark. Parse `RESULT_JSON` and write the metrics into local
+   `memory/v{{N}}.json`; remote memory is never used.
 
 2. **Metrics recorded** (locally from the sandbox `RESULT_JSON`):
    - `performance.latency_us` = **geomean** of per-workload kernel latency (primary objective: minimize)
    - `performance.latency_us_by_shape` — per-workload latency keyed by workload `uuid`
-   - `performance.speedup_vs_ref_geomean` — geomean speedup vs reference
+   - `performance.speedup_vs_ref_geomean` — geomean speedup when the selected evaluator provides it;
+     Atrex-Bench `run_eval` records candidate-only timing, so this field is null on native campaigns
    - `correctness.status` / `quality_gate.result` — PASS iff ALL workloads pass
 
 3. **Measurement reliability guard**: Before accepting a large delta (especially regressions >30%), re-run
