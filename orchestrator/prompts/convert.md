@@ -48,6 +48,7 @@ Take a **different** approach this time; do not repeat a recorded dead-end.
 
 Read the single conversion sheet for the **real arch** (do not read the others):
 - `sm_100` / `sm_103` (Blackwell data-center, B200/B300) → `gpu-wiki/docs/nvidia/blackwell/converter/blackwell.md`
+- `sm_110` (Blackwell Thor, Jetson Thor) → `gpu-wiki/docs/nvidia/blackwell/converter/blackwell.md`, but treat its tcgen05/TMEM constructs as unverified on Thor: check `gpu-wiki/docs/nvidia/blackwell-thor/hardware-specs/hardware_specs_sm110.md` first and probe on device before relying on them
 - `sm_90` (Hopper) → `gpu-wiki/docs/nvidia/hopper/converter/hopper.md`
 - `gfx94*` (CDNA3) → `gpu-wiki/docs/amd/cdna3/converter/cdna3.md`; `gfx95*` (CDNA4) → `gpu-wiki/docs/amd/cdna4/converter/cdna4.md`
 

@@ -179,7 +179,7 @@ class QueryTests(unittest.TestCase):
 
     def test_thor_aliases_inherit_blackwell_and_exclude_sibling_products(self):
         outputs = []
-        for alias in ("thor", "jetson-thor", "jetson-agx-thor", "t5000", "sm110"):
+        for alias in ("thor", "jetson-thor", "jetson-agx-thor", "t4000", "t5000", "sm110"):
             code, output = self.run_query("--arch", alias)
             self.assertEqual(code, 0, alias)
             self.assertIn("arch=blackwell-thor", output, alias)
@@ -690,6 +690,7 @@ class ArchitectureFirstLayoutTests(unittest.TestCase):
             "b300": "nvidia/blackwell-ultra/hardware-specs/hardware_specs_b300.md",
             "thor": "nvidia/blackwell-thor/hardware-specs/hardware_specs_sm110.md",
             "sm110": "nvidia/blackwell-thor/hardware-specs/hardware_specs_sm110.md",
+            "t4000": "nvidia/blackwell-thor/hardware-specs/hardware_specs_sm110.md",
             "t5000": "nvidia/blackwell-thor/hardware-specs/hardware_specs_sm110.md",
             "pro5000": "nvidia/blackwell-geforce/hardware-specs/hardware_specs_sm120.md",
             "sm120": "nvidia/blackwell-geforce/hardware-specs/hardware_specs_sm120.md",
@@ -775,7 +776,7 @@ class HardwareKnowledgeTests(unittest.TestCase):
             "hardware_specs_sm110.md"
         ).read_text(encoding="utf-8")
         self.assertIn("Wiki compute-capability / SM target | SM110", hardware)
-        self.assertIn("Not specified; verify on device", hardware)
+        self.assertIn("| Compute capability (NVIDIA CUDA GPUs list) | 11.0 |", hardware)
 
         capabilities = (
             REPO_ROOT

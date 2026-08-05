@@ -32,6 +32,7 @@ ARCH_ALIASES = {
         "sm-110",
         "sm110",
         "sm_110",
+        "t4000",
         "t5000",
         "thor",
     },
@@ -159,8 +160,8 @@ REFERENCE_KINDS = {
 DEFAULT_EXCLUDED_REFERENCE_KINDS = {"test", "build", "package"}
 REFERENCE_PRODUCTS = {
     "a100", "h20", "h100", "h200", "b200", "gb200", "b300", "gb300",
-    "jetson-thor", "t5000", "pro5000", "rtx-pro-5000", "mi300x",
-    "mi308x", "mi355x",
+    "jetson-thor", "t4000", "t5000", "pro5000", "rtx-pro-5000",
+    "mi300x", "mi308x", "mi355x",
 }
 # The reference tree predates product overlays in a few places. Explicit
 # architecture markers in a path narrow the physical directory scope; otherwise
@@ -175,6 +176,7 @@ REFERENCE_ARCH_MARKERS = {
     "sm120": "blackwell-geforce",
     "pro5000": "blackwell-geforce",
     "sm110": "blackwell-thor",
+    "t4000": "blackwell-thor",
     "t5000": "blackwell-thor",
     "jetsonthor": "blackwell-thor",
     "sm103": "blackwell-ultra",

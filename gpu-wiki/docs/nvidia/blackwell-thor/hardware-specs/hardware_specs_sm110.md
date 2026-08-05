@@ -1,10 +1,13 @@
 # NVIDIA Jetson Thor / SM110 Hardware Specifications
 
 This page is the hardware-fact entry point for NVIDIA Jetson Thor. This wiki
-uses the **SM110** scope for target isolation; the NVIDIA Jetson Thor Modules
+uses the **SM110** scope for target isolation. The Jetson Thor Modules
 Datasheet confirms a Blackwell GPU but does not itself state a compute
-capability, PTX target, or the exact `sm_110*` target spelling. Verify those
-on the deployed system before compiling or porting a kernel.
+capability or PTX target; NVIDIA's official CUDA GPUs list closes that gap:
+Jetson T5000 and T4000 are **compute capability 11.0**, compiled as
+`sm_110` / `compute_110` with CUDA 13.0 or later (JetPack 7.x). Confirm the
+reported capability on the deployed system before compiling or porting a
+kernel.
 
 Jetson Thor is distinct from SM100/B200, SM103/B300, and SM120
 GeForce/workstation GPUs. Do not transfer their product-level memory, power,
@@ -19,7 +22,9 @@ SM-count, or instruction assumptions without Thor-specific evidence.
 | Module SKUs | Jetson T5000, Jetson T4000 |
 | GPU architecture scope | Blackwell Thor |
 | Wiki compute-capability / SM target | SM110 |
-| Datasheet statement about compute capability / PTX target | Not specified; verify on device |
+| Compute capability (NVIDIA CUDA GPUs list) | 11.0 |
+| Code-generation target | `sm_110` / `compute_110`, CUDA 13.0+ (JetPack 7.x) |
+| Datasheet statement about compute capability / PTX target | Not specified; confirmed by the NVIDIA CUDA GPUs list |
 
 ## GPU and AI-compute specifications
 
@@ -73,8 +78,8 @@ preliminary and subject to change.
 
 ## Kernel-development facts still requiring verification
 
-- Exact compute capability and valid CUDA code-generation targets.
-- JetPack, Jetson Linux/L4T, CUDA, driver, PTX, and cubin compatibility.
+- Per-toolchain PTX/cubin compatibility details: exact JetPack, Jetson
+  Linux/L4T, CUDA, and driver version pairings on the deployed unit.
 - TMA, TMEM, tcgen05, cluster, PDL, and low-precision instruction support.
 - Per-SM resources, cache hierarchy, shared-memory carveout, and occupancy
   limits.
@@ -86,5 +91,7 @@ preliminary and subject to change.
 
 - NVIDIA, [Jetson Thor Modules Datasheet, 4767587, January 2026](https://nvdam.widen.net/s/mdn8tjqrzn/robotics-datasheet-update-jetson-thor-modules-nvidia-us-4767587), pages 1–3.
 - NVIDIA, [Jetson Thor product page](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-thor/).
+- NVIDIA, [CUDA GPUs by Compute Capability](https://developer.nvidia.com/cuda-gpus) — lists Jetson T5000 and T4000 under compute capability 11.0.
+- NVIDIA, [CUDA 13.0 release notes](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html) — `sm_110` target support requires CUDA 13.0 or later.
 - The provided signed NVIDIA download URL resolves to the same module Datasheet;
   do not copy its temporary token into durable documentation.
