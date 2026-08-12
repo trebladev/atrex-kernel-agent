@@ -48,6 +48,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -73,16 +74,40 @@ def _geomean(xs: list[float]) -> float:
 
 
 def _run_eval(workspace: Path, traces_path: Path) -> None:
-    cmd = _sol_execbench_cmd() + [".", "--solution", "solution.json", "-o", str(traces_path)]
-    if (workspace / "config.json").exists():
-        cmd += ["--config", "config.json"]
-    # Allow overriding the evaluator subprocess timeout via env var (seconds).
-    # The PyTorch V0 reference can be very slow on large workloads; default 1200s.
-    eval_timeout = os.environ.get("SOL_EVAL_TIMEOUT", "1200")
-    cmd += ["--timeout", str(eval_timeout)]
-    print(f"[test_kernel] {' '.join(cmd)}", flush=True)
-    # Stream the evaluator's own table to stderr; traces go to the JSONL file.
-    subprocess.run(cmd, cwd=str(workspace), check=False)
+    eval_workspace = workspace
+    temp_workspace: tempfile.TemporaryDirectory[str] | None = None
+    definition_path = workspace / "definition.json"
+    if definition_path.is_file():
+        definition = json.loads(definition_path.read_text(encoding="utf-8"))
+        # The published FlashInfer-Bench definitions use an empty provenance ID,
+        # while recent SOL-ExecBench models accept either a non-empty string or
+        # null.  Match the gateway's SOL compatibility patch in an ephemeral copy;
+        # the campaign's immutable definition.json remains byte-for-byte intact.
+        if definition.get("hf_id") == "":
+            temp_workspace = tempfile.TemporaryDirectory(prefix="sol-eval-")
+            eval_workspace = Path(temp_workspace.name) / "workspace"
+            shutil.copytree(workspace, eval_workspace)
+            definition["hf_id"] = None
+            (eval_workspace / "definition.json").write_text(
+                json.dumps(definition, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            print("[test_kernel] applying ephemeral hf_id compatibility patch", flush=True)
+
+    try:
+        cmd = _sol_execbench_cmd() + [".", "--solution", "solution.json", "-o", str(traces_path)]
+        if (eval_workspace / "config.json").exists():
+            cmd += ["--config", "config.json"]
+        # Allow overriding the evaluator subprocess timeout via env var (seconds).
+        # The PyTorch V0 reference can be very slow on large workloads; default 1200s.
+        eval_timeout = os.environ.get("SOL_EVAL_TIMEOUT", "1200")
+        cmd += ["--timeout", str(eval_timeout)]
+        print(f"[test_kernel] {' '.join(cmd)}", flush=True)
+        # Stream the evaluator's own table to stderr; traces go to the JSONL file.
+        subprocess.run(cmd, cwd=str(eval_workspace), check=False)
+    finally:
+        if temp_workspace is not None:
+            temp_workspace.cleanup()
 
 
 def _parse_traces(traces_path: Path) -> list[dict]:

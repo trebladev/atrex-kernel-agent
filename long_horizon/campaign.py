@@ -19,16 +19,22 @@ from .git_episode import (
 )
 from .journal import initialize as initialize_journal
 from .journal import load as load_journal
+from .journal import sync_live_memory
 from .journal import validate_terminal
 from .models import EpisodeHandoff, SupervisorState, VerificationResult
 from .session import LongSessionRunner
 from .store import CampaignStore, RUNTIME_DIR, VERIFY_DIR
+from .telemetry import summarize_episode
 from .verifier import GatewayABBAValidator
 
 
-PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "episode.md"
 MODULE_ROOT = Path(__file__).resolve().parent.parent
+PROMPT_PATH = MODULE_ROOT / "orchestrator" / "prompts" / "episode.md"
 EVIDENCE_PREFIXES = ("plans/", "profiles/")
+MAX_EPISODE_HISTORY_BYTES = 48 * 1024
+MAX_HISTORY_SUMMARY_CHARS = 6_000
+MAX_HISTORY_DIRECTION_CHARS = 2_000
+MAX_HISTORY_DIRECTIONS = 8
 
 
 def _render(template: str, values: dict[str, object]) -> str:
@@ -75,17 +81,69 @@ class LongHorizonCampaign:
         return self.base_campaign.workspace
 
     def _history(self, state: SupervisorState) -> str:
-        compact = []
+        compact: list[dict[str, Any]] = []
         for attempt in state.attempts[-8:]:
-            compact.append(
-                {
-                    key: attempt.get(key)
-                    for key in (
-                        "episode", "status", "accepted", "summary", "next_directions",
-                        "candidate_commit", "promotion_commit", "verification", "violation",
+            item = {
+                key: attempt.get(key)
+                for key in (
+                    "episode", "status", "accepted", "summary", "next_directions",
+                    "candidate_commit", "promotion_commit", "verification", "violation",
+                )
+                if attempt.get(key) is not None
+            }
+            summary = item.get("summary")
+            if isinstance(summary, str) and len(summary) > MAX_HISTORY_SUMMARY_CHARS:
+                item["summary"] = summary[:MAX_HISTORY_SUMMARY_CHARS] + "… [truncated]"
+            directions = item.get("next_directions")
+            if isinstance(directions, list):
+                item["next_directions"] = [
+                    (
+                        direction[:MAX_HISTORY_DIRECTION_CHARS] + "… [truncated]"
+                        if isinstance(direction, str)
+                        and len(direction) > MAX_HISTORY_DIRECTION_CHARS
+                        else direction
                     )
-                    if attempt.get(key) is not None
+                    for direction in directions[:MAX_HISTORY_DIRECTIONS]
+                ]
+            verification = item.get("verification")
+            if isinstance(verification, dict):
+                item["verification"] = {
+                    key: verification.get(key)
+                    for key in (
+                        "gate",
+                        "candidate_latency_us",
+                        "incumbent_latency_us",
+                        "improvement_pct",
+                        "error",
+                    )
+                    if verification.get(key) is not None
                 }
+            episode = int(attempt.get("episode", 0) or 0)
+            if episode > 0:
+                episode_dir = self.workspace / RUNTIME_DIR / "episodes" / f"e{episode:04d}"
+                for archive_name in ("interrupted_archive", "archive"):
+                    for patch_name in ("candidate.patch", "worktree.patch"):
+                        patch = episode_dir / archive_name / patch_name
+                        if patch.is_file() and patch.stat().st_size:
+                            item["recovery_patch"] = str(patch)
+                            break
+                    if "recovery_patch" in item:
+                        break
+            compact.append(item)
+        omitted = 0
+        while len(compact) > 1:
+            rendered = json.dumps(compact, indent=2, ensure_ascii=False)
+            if len(rendered.encode("utf-8")) <= MAX_EPISODE_HISTORY_BYTES:
+                return rendered
+            compact.pop(0)
+            omitted += 1
+        if omitted:
+            compact.insert(
+                0,
+                {
+                    "omitted_older_attempts": omitted,
+                    "note": "Read canonical memory and archived episode evidence in the workspace if needed.",
+                },
             )
         return json.dumps(compact, indent=2, ensure_ascii=False)
 
@@ -97,11 +155,15 @@ class LongHorizonCampaign:
         worktree: EpisodeWorktree,
         journal_path: Path,
         handoff_path: Path,
+        live_memory_path: Path,
         state: SupervisorState,
         conversion_pending: bool,
     ) -> str:
-        directives = main_adapter.episode_directives(self.base_campaign)
-        journal_command = f"PYTHONPATH={MODULE_ROOT} python -m long_horizon.journal"
+        directives = main_adapter.episode_directives(self.base_campaign, version)
+        journal_command = (
+            f"PYTHONPATH={MODULE_ROOT} python -m long_horizon.journal "
+            f"--live-path {json.dumps(str(live_memory_path))}"
+        )
         return _render(
             PROMPT_PATH.read_text(encoding="utf-8"),
             {
@@ -120,11 +182,10 @@ class LongHorizonCampaign:
                 "EVALUATOR": directives["evaluator"],
                 "HARDWARE": directives["hardware"],
                 "SANDBOX": directives["sandbox"],
+                "AGENT_RUNTIME": directives["agent_runtime"],
+                "PLAN_GENERATOR": directives["plan_generator"],
                 "HISTORY": self._history(state),
                 "JOURNAL_COMMAND": journal_command,
-                "MAIN_ITERATION_PLAYBOOK": main_adapter.iteration_playbook(
-                    self.base_campaign, worktree.path, version
-                ),
                 "CONVERSION_DIRECTIVE": (
                     "This episode is a mandatory Triton-to-Gluon conversion attempt. Do not "
                     "submit another Triton kernel. A candidate must be a committed Gluon kernel, "
@@ -292,54 +353,6 @@ class LongHorizonCampaign:
             },
         }
 
-    def _terminal_padding_memory_record(
-        self,
-        *,
-        version: int,
-        source_attempt: dict[str, Any],
-        incumbent_commit: str,
-    ) -> dict[str, Any]:
-        source_version = int(source_attempt.get("version", 0) or 0)
-        source_episode = int(source_attempt.get("episode", 0) or 0)
-        reason = (
-            "terminal padding after a repeated blocked episode; the incumbent kernel is "
-            "unchanged and this record exists only to satisfy main's initial aggregation barrier"
-        )
-        return {
-            "version": f"v{version}",
-            "masked": False,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "performance": {
-                "latency_us": None,
-                "latency_us_geomean": None,
-                "latency_us_by_shape": {},
-            },
-            "optimization": {
-                "action_category": "long_horizon_terminal_padding",
-                "action_description": reason,
-                "expected_impact": "no kernel or performance change",
-                "risks_and_rollback": "metadata-only commit; incumbent kernel is preserved",
-            },
-            "profile_evidence": {
-                "tool_used": "none",
-                "evidence_summary": "no agent, sandbox, or GPU execution",
-                "bottleneck_type": "aggregation compatibility",
-                "evidence_chain": "repeated blocked episode -> terminal metadata padding",
-            },
-            "correctness": {"status": "UNKNOWN"},
-            "quality_gate": {"result": "FAIL", "failure_reason": reason},
-            "open_directions": [],
-            "git_commit_hash": None,
-            "long_horizon": {
-                "status": "terminal_padding",
-                "terminal_padding": True,
-                "source_blocked_version": source_version,
-                "source_blocked_episode": source_episode,
-                "incumbent_commit": incumbent_commit,
-                "incumbent_preserved": True,
-                "reason": "initial aggregation compatibility",
-            },
-        }
 
     @staticmethod
     def _valid_blocked_attempt(attempt: object) -> bool:
@@ -370,51 +383,6 @@ class LongHorizonCampaign:
             return attempt
         return None
 
-    def _pad_terminal_block_for_aggregation(
-        self, source_attempt: dict[str, Any]
-    ) -> list[int]:
-        target = main_adapter.initial_aggregation_padding_target(self.base_campaign)
-        current = main_adapter.latest_version(self.workspace)
-        if target is None or current >= target:
-            return []
-        if not main_adapter.has_accepted_bucket_kernel(self.base_campaign):
-            print(
-                "[long-horizon] terminal block is below the initial aggregation barrier, "
-                "but this bucket has no accepted kernel; refusing to pad",
-                flush=True,
-            )
-            return []
-
-        incumbent_commit = git_head(self.workspace)
-        source_episode = int(source_attempt.get("episode", 0) or 0)
-        padded: list[int] = []
-        for version in range(current + 1, target + 1):
-            memory = self._terminal_padding_memory_record(
-                version=version,
-                source_attempt=source_attempt,
-                incumbent_commit=incumbent_commit,
-            )
-            record_episode_outcome(
-                self.workspace,
-                base_commit=git_head(self.workspace),
-                version=version,
-                episode=source_episode,
-                status="terminal-padding",
-                memory_record=memory,
-            )
-            main_adapter.notify_iteration(
-                self.base_campaign,
-                version,
-                memory,
-                False,
-            )
-            padded.append(version)
-            print(
-                f"[long-horizon] terminal padding v{version}/v{target}; "
-                "incumbent kernel unchanged",
-                flush=True,
-            )
-        return padded
 
     def _recover_interrupted(self, store: CampaignStore, state: SupervisorState) -> None:
         active = store.load_active()
@@ -566,7 +534,6 @@ class LongHorizonCampaign:
             )
         terminal_block = self._terminal_blocked_attempt(state)
         if terminal_block is not None:
-            self._pad_terminal_block_for_aggregation(terminal_block)
             reason = "blocked"
             print(
                 f"[long-horizon] STOP {reason}; episodes={state.episodes} "
@@ -660,7 +627,12 @@ class LongHorizonCampaign:
             journal_path = runtime / "journal.json"
             handoff_path = runtime / "handoff.json"
             initialize_journal(
-                journal_path, episode=episode, base_commit=base_commit, branch=worktree.branch
+                journal_path,
+                episode=episode,
+                memory_version=memory_version,
+                base_commit=base_commit,
+                branch=worktree.branch,
+                live_path=store.live_memory_path,
             )
             prompt = self._prompt(
                 episode=episode,
@@ -668,10 +640,19 @@ class LongHorizonCampaign:
                 worktree=worktree,
                 journal_path=journal_path,
                 handoff_path=handoff_path,
+                live_memory_path=store.live_memory_path,
                 state=state,
                 conversion_pending=conversion_pending,
             )
             store.write_brief(episode, prompt)
+            telemetry_environment = {
+                "ATREX_TELEMETRY_TRACE": str(runtime / "telemetry.jsonl"),
+                "ATREX_TELEMETRY_CAMPAIGN_ID": str(
+                    getattr(self.base_campaign, "campaign_name", self.workspace.name)
+                ),
+                "ATREX_TELEMETRY_ITERATION_ID": f"episode-{episode:04d}",
+                "ATREX_TELEMETRY_ATTEMPT_ID": "invocation",
+            }
             result = runner.run(
                 worktree.path,
                 prompt,
@@ -681,6 +662,7 @@ class LongHorizonCampaign:
                 completion_check=lambda handoff: self._completion_check(
                     worktree, journal_path, handoff
                 ),
+                telemetry_environment=telemetry_environment,
             )
             state.episodes = episode
             state.tokens += result.tokens
@@ -765,6 +747,34 @@ class LongHorizonCampaign:
                 "next_directions": outcome.get("next_directions") if isinstance(outcome, dict) else None,
                 "verification": verification.as_dict() if verification else None,
             }
+            try:
+                telemetry = summarize_episode(
+                    episode=episode,
+                    version=memory_version,
+                    status=status,
+                    accepted=accepted,
+                    control_tokens=result.tokens,
+                    resume_count=result.resume_count,
+                    invocations=result.invocations,
+                )
+                telemetry_path = store.archive_telemetry(episode, telemetry)
+                attempt["telemetry"] = {
+                    "summary": str(telemetry_path.relative_to(store.workspace)),
+                    "measurement": telemetry["measurement"],
+                    "reason_codes": telemetry["reason_codes"],
+                }
+            except Exception as exc:
+                reason_code = f"telemetry_finalize_failed:{type(exc).__name__}"
+                attempt["telemetry"] = {
+                    "summary": None,
+                    "measurement": "unavailable",
+                    "reason_codes": [reason_code],
+                }
+                print(
+                    f"[long-horizon] WARNING: could not finalize episode {episode} "
+                    f"telemetry: {reason_code}",
+                    flush=True,
+                )
             valid_blocked = status == "blocked" and not violation
             if valid_blocked:
                 retry_of = state.attempts[-1] if self._blocked_retry_pending(state) else None
@@ -836,13 +846,22 @@ class LongHorizonCampaign:
                     state.protocol_failures += 1
                 else:
                     state.rejected += 1
-            main_adapter.notify_iteration(
-                self.base_campaign,
-                memory_version,
-                memory,
-                accepted,
-                verification.incumbent_latency_us if verification else None,
-            )
+            try:
+                sync_live_memory(
+                    store.live_memory_path,
+                    journal,
+                    phase="recorded",
+                    canonical_memory=f"memory/v{memory_version}.json",
+                    accepted=accepted,
+                    memory_version=memory_version,
+                    episode=episode,
+                )
+            except OSError as exc:
+                print(
+                    "[long-horizon] WARNING: could not update memory/live.json: "
+                    f"{type(exc).__name__}",
+                    flush=True,
+                )
             store.archive_attempt(episode, attempt)
             state.attempts.append(attempt)
             store.save_state(state)
@@ -870,7 +889,6 @@ class LongHorizonCampaign:
                         flush=True,
                     )
                     continue
-                self._pad_terminal_block_for_aggregation(attempt)
                 reason = "blocked"
                 break
             if (

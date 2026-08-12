@@ -8,15 +8,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 
+from .markers import phase_marker_receipts
 from .model import (
     AgentRuntimeCapabilities,
     NormalizedAgentEvent,
     TokenUsage,
     sum_token_usages,
 )
-
-
-PHASE_MARKER_PREFIX = "ATREX_TRACE_EVENT="
 
 
 def _counter(usage: Mapping[str, object], *names: str) -> int | None:
@@ -230,43 +228,8 @@ def _phase_marker_receipts(event: Mapping[str, object]):
         ):
             roots.append(item.get("aggregated_output"))
 
-    def strings(value: object):
-        if isinstance(value, str):
-            yield value
-        elif isinstance(value, Mapping):
-            for nested in value.values():
-                yield from strings(nested)
-        elif isinstance(value, list):
-            for nested in value:
-                yield from strings(nested)
-
     for root in roots:
-        for text in strings(root):
-            for line in text.splitlines():
-                if not line.startswith(PHASE_MARKER_PREFIX):
-                    continue
-                try:
-                    receipt = json.loads(line[len(PHASE_MARKER_PREFIX) :])
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(receipt, dict):
-                    continue
-                if (
-                    receipt.get("schema") != "atrex.iteration_trace.v1"
-                    or receipt.get("kind") != "phase_marker"
-                ):
-                    continue
-                action = receipt.get("action")
-                phase = receipt.get("phase")
-                marker_id = receipt.get("marker_id")
-                if (
-                    action in {"start", "end"}
-                    and isinstance(phase, str)
-                    and phase
-                    and isinstance(marker_id, str)
-                    and marker_id
-                ):
-                    yield action, phase, marker_id
+        yield from phase_marker_receipts(root)
 
 
 def _json_events(stdout: str):
@@ -295,6 +258,7 @@ class ClaudeLikeAdapter(AgentBackendAdapter):
         normalized: list[NormalizedAgentEvent] = []
         terminal = TokenUsage.unavailable()
         sequence = 0
+        seen_usage_message_ids: set[str] = set()
         for event in _json_events(stdout):
             event_type = event.get("type")
             if event_type == "result":
@@ -316,7 +280,16 @@ class ClaudeLikeAdapter(AgentBackendAdapter):
             if usage is None and isinstance(message, Mapping):
                 usage = message.get("usage")
             parsed = token_usage_from_mapping(usage)
-            if parsed.total_tokens is not None:
+            message_id = (
+                message.get("id")
+                if isinstance(message, Mapping)
+                and isinstance(message.get("id"), str)
+                else None
+            )
+            duplicate_usage = bool(
+                message_id and message_id in seen_usage_message_ids
+            )
+            if parsed.total_tokens is not None and not duplicate_usage:
                 normalized.append(
                     NormalizedAgentEvent(
                         sequence=sequence,
@@ -325,6 +298,8 @@ class ClaudeLikeAdapter(AgentBackendAdapter):
                     )
                 )
                 sequence += 1
+                if message_id:
+                    seen_usage_message_ids.add(message_id)
             for action, phase, marker_id in _phase_marker_receipts(event):
                 normalized.append(
                     NormalizedAgentEvent(
@@ -392,6 +367,23 @@ class QoderAdapter(ClaudeLikeAdapter):
 
     def __init__(self, humanize_dir: Path) -> None:
         del humanize_dir
+
+    def normalize_stream(
+        self, stdout: str
+    ) -> tuple[tuple[NormalizedAgentEvent, ...], TokenUsage]:
+        events, terminal = super().normalize_stream(stdout)
+        usage_events = [event for event in events if event.usage is not None]
+        if (
+            terminal.total_tokens == 0
+            and usage_events
+            and all(event.usage.total_tokens == 0 for event in usage_events if event.usage)
+        ):
+            markers = [event for event in events if event.kind == "phase_marker"]
+            return (
+                tuple(replace(event, sequence=index) for index, event in enumerate(markers)),
+                TokenUsage.unavailable(),
+            )
+        return events, terminal
 
     def build_command(
         self,
@@ -546,7 +538,6 @@ class CodexAdapter(AgentBackendAdapter):
             "codex",
             "exec",
             "--json",
-            "--ephemeral",
             "--color",
             "never",
             "--dangerously-bypass-approvals-and-sandbox",
@@ -601,7 +592,7 @@ class CodexAdapter(AgentBackendAdapter):
         return tuple(normalized), terminal
 
     def auth_hint(self) -> str:
-        return 'run `codex login status` and `codex exec --ephemeral "reply ok"` to diagnose'
+        return 'run `codex login status` and `codex exec "reply ok"` to diagnose'
 
 
 AdapterFactory = Callable[[Path], AgentBackendAdapter]

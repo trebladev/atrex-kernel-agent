@@ -9,15 +9,30 @@ import re
 import subprocess
 import sys
 import tokenize
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 OPTIMIZATION_MODE_CHOICES = ("leaderboard", "production")
 MODE_STATE_FILE = ".orchestrator_mode.json"
 POLICY_BEGIN = "<!-- ATREX_OPTIMIZATION_MODE_POLICY_BEGIN -->"
 POLICY_END = "<!-- ATREX_OPTIMIZATION_MODE_POLICY_END -->"
-AGGREGATE_DISPATCH_FILE = "aggregate_dispatch.json"
-AGGREGATE_KERNELS_DIR = "aggregate_kernels"
+
+
+@dataclass(frozen=True)
+class DependencyReviewSignal:
+    """One non-mechanical dependency signal for independent agent review."""
+
+    id: str
+    kind: str
+    value: str
+
+
+DependencyReviewer = Callable[
+    [Path, str, tuple[DependencyReviewSignal, ...]],
+    list[str],
+]
 
 
 def _framework_key(framework: str) -> str:
@@ -140,11 +155,12 @@ def optimization_mode_directive(mode: str, framework: str) -> str:
         f"{framework_rule}"
         "- The V0 PyTorch reference wrapper is the only baseline exception. Every optimized candidate "
         f"committed after V0 must implement the GPU computation directly in **{candidate_framework}**.\n"
-        "- Do not import, call, dispatch to, or depend on third-party kernel/operator libraries "
-        "(for example FlashInfer, FlashAttention, xFormers, vLLM custom ops, cuBLAS/cuDNN wrappers, "
-        "CUTLASS kernels outside CuteDSL itself, or another DSL). Documentation and source may be read "
-        "for research, but the submitted candidate must be self-contained apart from Python/PyTorch "
-        "plumbing and the selected framework/toolchain.\n"
+        "- Third-party dependencies are reviewed by a separate, read-only policy agent based on how "
+        "they are actually used. Compiler bindings, header discovery, ABI/launch plumbing, and ordinary "
+        "non-compute support utilities may be accepted when they only build or launch the candidate's "
+        "self-authored kernel. Prebuilt kernels/operators/math implementations, alternate DSLs, hidden "
+        "dispatch, and external implementation loading remain forbidden. Do not assume that either an "
+        "unfamiliar package name or a familiar vendor package is automatically accepted or rejected.\n"
         "- Update `solution.json` so its languages and dependencies contain only PyTorch/evaluator "
         "plumbing plus the selected framework. Before committing, inspect `kernel.py` and "
         "`solution.json` against these rules. The orchestrator will mechanically reject and revert a "
@@ -339,12 +355,13 @@ def production_kernel_violations(
     framework: str,
     *,
     require_gluon: bool = False,
+    dependency_reviewer: DependencyReviewer | None = None,
 ) -> list[str]:
-    """Return static production-policy violations for the current candidate.
+    """Return production-policy violations for the current candidate.
 
-    This is deliberately a fail-closed commit gate. Runtime correctness and
-    performance still use the normal sandbox; this gate proves implementation
-    provenance and dependency discipline, which benchmark results cannot prove.
+    Mechanically provable rules stay local. Ambiguous dependency provenance is
+    delegated through ``dependency_reviewer`` and fails closed when no reviewer
+    is supplied. Runtime correctness and performance still use the normal sandbox.
     """
     key = _framework_key(framework)
     errors: list[str] = []
@@ -359,93 +376,32 @@ def production_kernel_violations(
     except SyntaxError as exc:
         return [f"kernel.py is not valid Python: {exc.msg} (line {exc.lineno})"]
 
-    policy_sources = [source]
-    policy_trees = [tree]
-    aggregate_dispatch = workspace / AGGREGATE_DISPATCH_FILE
-    aggregate_mode = aggregate_dispatch.is_file()
-    legacy_aggregate_modules = False
-    if aggregate_mode:
-        try:
-            dispatch = json.loads(aggregate_dispatch.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            errors.append(f"{AGGREGATE_DISPATCH_FILE} is invalid: {exc}")
-            dispatch = {}
-        schema_version = dispatch.get("schema_version")
-        if schema_version not in {1, 2} or dispatch.get("mode") != "deterministic_dispatch":
-            errors.append("aggregate dispatcher manifest is not deterministic schema v1/v2")
-        modules = dispatch.get("modules")
-        if not isinstance(modules, dict) or not modules:
-            errors.append("aggregate dispatcher manifest has no bucket modules")
-            modules = {}
-        if schema_version == 1:
-            legacy_aggregate_modules = True
-            for bucket, record in sorted(modules.items()):
-                relative = record.get("path") if isinstance(record, dict) else None
-                if not isinstance(relative, str):
-                    errors.append(f"aggregate bucket {bucket} has no source path")
-                    continue
-                relative_path = Path(relative)
-                if (
-                    relative_path.is_absolute()
-                    or ".." in relative_path.parts
-                    or len(relative_path.parts) != 2
-                    or relative_path.parts[0] != AGGREGATE_KERNELS_DIR
-                    or relative_path.suffix != ".py"
-                ):
-                    errors.append(f"invalid aggregate bucket source path: {relative}")
-                    continue
-                module_path = workspace / relative_path
-                if not module_path.is_file():
-                    errors.append(f"aggregate bucket source is missing: {relative}")
-                    continue
-                module_source = module_path.read_text(encoding="utf-8", errors="replace")
-                try:
-                    module_tree = ast.parse(module_source, filename=str(module_path))
-                except SyntaxError as exc:
-                    errors.append(
-                        f"aggregate bucket {bucket} is not valid Python: "
-                        f"{exc.msg} (line {exc.lineno})"
-                    )
-                    continue
-                policy_sources.append(module_source)
-                policy_trees.append(module_tree)
-        elif schema_version == 2:
-            if dispatch.get("source_layout") != "embedded_single_file":
-                errors.append("schema-v2 aggregate source layout is not embedded_single_file")
-            for bucket, record in sorted(modules.items()):
-                if not isinstance(record, dict) or record.get("embedded") is not True:
-                    errors.append(f"aggregate bucket {bucket} is not marked as embedded")
-                elif record.get("path"):
-                    errors.append(f"embedded aggregate bucket {bucket} declares an external path")
-
-    roots: set[str] = set()
-    has_relative_import = False
-    for policy_tree in policy_trees:
-        tree_roots, tree_relative = _import_roots(policy_tree)
-        roots.update(tree_roots)
-        has_relative_import = has_relative_import or tree_relative
+    roots, has_relative_import = _import_roots(tree)
     if has_relative_import:
         errors.append("relative/local-module imports are not self-contained")
-    policy_source = "\n".join(_code_without_prose(source) for source in policy_sources)
+    policy_source = _code_without_prose(source)
     # A production Triton campaign may enter the orchestrator-controlled Gluon phase.
     # Once a Gluon marker is present, validate the candidate as Gluon (which necessarily
     # imports the Triton package) rather than rejecting it as an alternate framework.
     effective_key = key
-    has_gluon_import = any(source_uses_gluon(source) for source in policy_sources)
+    has_gluon_import = source_uses_gluon(source)
     if key == "triton" and has_gluon_import:
         effective_key = "gluon"
     if require_gluon and effective_key != "gluon":
         errors.append("switching back from the accepted Gluon phase to Triton is forbidden")
 
     allowed = _STDLIB_IMPORTS | _ALLOWED_IMPORTS[effective_key]
-    if legacy_aggregate_modules:
-        allowed = allowed | {AGGREGATE_KERNELS_DIR}
-    for root in sorted(roots - allowed):
-        errors.append(f"third-party import is not allowed in production mode: {root}")
+    dependency_signals: list[DependencyReviewSignal] = [
+        DependencyReviewSignal(
+            id=f"import:{root}",
+            kind="import",
+            value=root,
+        )
+        for root in sorted(roots - allowed)
+    ]
     for root in sorted(roots & {"ctypes", "importlib", "pkgutil", "runpy", "subprocess"}):
         errors.append(f"dynamic external-code loading is forbidden in production candidate: {root}")
-    for policy_tree in policy_trees:
-        errors.extend(_torch_compute_violations(policy_tree))
+    errors.extend(_torch_compute_violations(tree))
 
     marker_checks = {
         "triton": (
@@ -457,7 +413,10 @@ def production_kernel_violations(
         "cuda": (
             "__global__" in policy_source
             and bool(re.search(r"load_inline|cpp_extension|CUDAExtension|nvrtc|cuda\.bindings", policy_source)),
-            "missing self-authored CUDA kernel/loader",
+            (
+                "missing self-authored CUDA kernel/loader in kernel.py; use an in-process "
+                "loader such as cuda.bindings/NVRTC"
+            ),
         ),
         "flydsl": (bool(re.search(r"(?:^|\n)\s*(?:import|from)\s+flydsl\b", policy_source)), "missing FlyDSL implementation"),
     }
@@ -483,15 +442,36 @@ def production_kernel_violations(
         r"\btorch\.ops\b": "torch.ops dispatch is a prebuilt/custom operator call",
         r"\btorch\.nn\.functional\b": "torch.nn.functional is not the selected kernel framework",
         r"\btorch\.(?:linalg|_scaled_mm)\b": "PyTorch compute fallback is not the selected kernel framework",
-        r"\b(?:flashinfer|flash_attn|xformers|vllm|sglang|bitsandbytes)\b": "third-party kernel/operator library reference",
-        r"\b(?:cublas|cudnn)[A-Za-z0-9_]*\b": "prebuilt CUDA math/operator library call",
-        r"#\s*include\s*[<\"]cutlass/": "prebuilt CUTLASS C++ kernels are forbidden outside CuteDSL",
     }
     for pattern, message in banned_source_patterns.items():
-        if re.search(pattern, policy_source, flags=re.IGNORECASE) and not (
-            effective_key == "cutedsl" and "CUTLASS" in message
-        ):
+        if re.search(pattern, policy_source, flags=re.IGNORECASE):
             errors.append(message)
+
+    review_source_patterns = {
+        "kernel_library_reference": (
+            r"\b(?:flashinfer|flash_attn|xformers|vllm|sglang|bitsandbytes)\b",
+            "third-party kernel/operator library reference",
+        ),
+        "cuda_library_reference": (
+            r"\b(?:cublas|cudnn)[A-Za-z0-9_]*\b",
+            "CUDA math/operator library reference",
+        ),
+        "cutlass_header_reference": (
+            r"#\s*include\s*[<\"]cutlass/",
+            "CUTLASS header reference",
+        ),
+    }
+    for marker, (pattern, description) in review_source_patterns.items():
+        if re.search(pattern, policy_source, flags=re.IGNORECASE) and not (
+            effective_key == "cutedsl" and marker == "cutlass_header_reference"
+        ):
+            dependency_signals.append(
+                DependencyReviewSignal(
+                    id=f"source:{marker}",
+                    kind="source_reference",
+                    value=description,
+                )
+            )
 
     solution_path = workspace / "solution.json"
     if solution_path.is_file():
@@ -505,7 +485,42 @@ def production_kernel_violations(
             for dependency in dependencies:
                 token = _normalized_dependency(dependency)
                 if token and token not in allowed_dependencies:
-                    errors.append(f"third-party solution dependency is not allowed: {dependency}")
+                    dependency_signals.append(
+                        DependencyReviewSignal(
+                            id=f"solution_dependency:{dependency}",
+                            kind="solution_dependency",
+                            value=str(dependency),
+                        )
+                    )
+
+    dependency_signals = list(dict.fromkeys(dependency_signals))
+    if dependency_signals:
+        if dependency_reviewer is None:
+            errors.append(
+                "third-party dependency requires independent agent review: "
+                + ", ".join(signal.id for signal in dependency_signals)
+            )
+        else:
+            try:
+                review_errors = dependency_reviewer(
+                    workspace,
+                    framework,
+                    tuple(dependency_signals),
+                )
+            except Exception as exc:
+                errors.append(
+                    "independent dependency review failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+            else:
+                if not isinstance(review_errors, list) or not all(
+                    isinstance(item, str) and item.strip() for item in review_errors
+                ):
+                    errors.append(
+                        "independent dependency review returned an invalid result"
+                    )
+                else:
+                    errors.extend(review_errors)
     return list(dict.fromkeys(errors))
 
 

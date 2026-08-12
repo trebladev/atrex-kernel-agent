@@ -8,10 +8,12 @@ from typing import Any
 from . import main_adapter
 from .models import SupervisorState
 from .protocol import atomic_write_json, atomic_write_text
+from .telemetry import render_episode_brief
 
 
 RUNTIME_DIR = ".atrex_long_horizon"
-VERIFY_DIR = "aggregate_kernels/.atrex_long_horizon_verify"
+VERIFY_DIR = "verification_artifacts/.atrex_long_horizon_verify"
+LIVE_MEMORY_FILE = "memory/live.json"
 
 
 class CampaignStore:
@@ -38,6 +40,7 @@ class CampaignStore:
             f"/{RUNTIME_DIR}/",
             f"/{VERIFY_DIR}/",
             f"/{main_adapter.STALL_STATE_FILE}",
+            f"/{LIVE_MEMORY_FILE}",
         )
         missing = [rule for rule in rules if rule not in text.splitlines()]
         if missing:
@@ -52,6 +55,11 @@ class CampaignStore:
     @property
     def active_path(self) -> Path:
         return self.root / "active_episode.json"
+
+    @property
+    def live_memory_path(self) -> Path:
+        """Uncommitted, best-effort progress for the currently active episode."""
+        return self.workspace / LIVE_MEMORY_FILE
 
     def episode_dir(self, episode: int) -> Path:
         path = self.root / "episodes" / f"e{episode:04d}"
@@ -88,4 +96,12 @@ class CampaignStore:
     def archive_attempt(self, episode: int, value: dict[str, Any]) -> Path:
         path = self.episode_dir(episode) / "attempt.json"
         atomic_write_json(path, value)
+        return path
+
+    def archive_telemetry(self, episode: int, value: dict[str, Any]) -> Path:
+        directory = self.episode_dir(episode)
+        path = directory / "telemetry.summary.json"
+        brief = render_episode_brief(value) + "\n"
+        atomic_write_json(path, value)
+        atomic_write_text(directory / "telemetry.brief.md", brief)
         return path
